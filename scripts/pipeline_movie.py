@@ -288,6 +288,8 @@ def pipeline(dir='/Users/amnon/Downloads/'):
         with open('barks_log.tsv', 'a') as bark_log:
             if barks is not None and len(barks) > 0:
                 bark_log.write(barks.to_csv(sep='\t', index=False, header=not os.path.exists('barks_log.tsv')))
+        # delete the mp3 file
+        os.remove(mp3_file)
 
     if mail_lines:
         send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
