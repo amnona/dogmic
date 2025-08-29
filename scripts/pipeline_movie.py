@@ -28,18 +28,18 @@ def send_email(recipient, subject, body, user='irrigation.computer.amnon@gmail.c
         smtp_server='smtp.gmail.com'
     '''
     if pwd is None:
-        pwd = secrets.get('IRRIGATOR_EMAIL_PASSWORD', None)
+        pwd = secrets.get('EMAIL_PASSWORD', None)
         if pwd is None:
-            logger.warning('IRRIGATOR_EMAIL_PASSWORD not in .env - please set')
+            logger.warning('EMAIL_PASSWORD not in .env - please set')
     if smtp_server is None:
-        smtp_server = secrets.get('IRRIGATOR_EMAIL_SMTP_SERVER', None)
+        smtp_server = secrets.get('EMAIL_SMTP_SERVER', None)
         if smtp_server is None:
-            logger.warning('IRRIGATOR_EMAIL_SMTP_SERVER not in .env - please set')
+            logger.warning('EMAIL_SMTP_SERVER not in .env - please set')
             return False
     if smtp_user is None:
-        smtp_user = secrets.get('IRRIGATOR_EMAIL_SMTP_USER', None)
+        smtp_user = secrets.get('EMAIL_SMTP_USER', None)
         if smtp_user is None:
-            logger.warning('IRRIGATOR_EMAIL_SMTP_USER not in .env - please set')
+            logger.warning('EMAIL_SMTP_USER not in .env - please set')
             return False
 
     FROM = user
@@ -140,7 +140,7 @@ def pipeline(dir='/Users/amnon/Downloads/'):
         mkv_to_mp3(f)
 
     if mail_lines:
-        send_email(secrets.get('IRRIGATOR_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
+        send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
     # Done processing all files
     logger.info("Pipeline processing complete.")
 
