@@ -137,7 +137,11 @@ def pipeline(dir='/Users/amnon/Downloads/'):
             mail_lines.append(f"MD5 for {f}: {md5_hash}")
         else:
             logger.warning(f"Failed to calculate MD5 for {f}")
-        mkv_to_mp3(f)
+        mp3_file = mkv_to_mp3(f)
+        if mp3_file:
+            logger.info(f"Extracted audio to {mp3_file}")
+        else:
+            logger.warning(f"Failed to extract audio from {f}")
 
     if mail_lines:
         send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
