@@ -100,7 +100,7 @@ def test_peaks(y, peak_pos, sr, window_duration=0.25,num_show=0):
 
 def calculate_barks(filename: str, bark_threshold: float = 0.3, bark_max_interval: float = 10, type='camera'):
     # get all the files in the base_dir that match the date
-    barks = pd.DataFrame(columns=['start_samples', 'end_samples', 'start_time', 'end_time', 'duration', 'num_barks', 'date', 'duration_sec'])
+    barks = pd.DataFrame(columns=['start_samples', 'end_samples', 'start_time', 'end_time', 'duration', 'num_barks', 'date', 'duration_sec', 'file_time'])
 
     for file in [filename]:
         logger.info('processing file %s' % file)
@@ -134,13 +134,14 @@ def calculate_barks(filename: str, bark_threshold: float = 0.3, bark_max_interva
             
             # Create a new row as a DataFrame and concatenate it
             new_row = pd.DataFrame({
+                'file_time': [start_time.strftime("%H:%M")],
                 'start_samples': [start_sample],
                 'end_samples': [end_sample],
                 'start_time': [start_time_event],
                 'end_time': [end_time_event],
                 'duration': [duration],
                 'num_barks': [num_barks],
-                'date': start_time_event.date(),
+                'date': [start_time_event.date()],
                 'duration_sec': [duration.total_seconds()]
             })
             barks = pd.concat([barks, new_row], ignore_index=True)
