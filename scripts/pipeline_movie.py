@@ -5,11 +5,147 @@ import hashlib
 import smtplib
 import argparse
 import subprocess, shlex, pathlib
+import datetime
+import numpy as np
+import librosa
+
+import pandas as pd
 from dotenv import dotenv_values
 
 logger = loguru.logger
 
 secrets = dotenv_values(".env")
+
+
+def get_sample_time(filename, sample_pos, sr=16000, type='dogmic') -> datetime.time:
+    # start_time = os.path.basename(filename)
+    start_time = '.'.join(filename.split('/')[-1].split('.')[:-1])
+    if type=='dogmic':
+        # the format is YYYYMMDDHHMMSS, so we can convert it to seconds
+        start_time = datetime.datetime.strptime(start_time, "%Y%m%d%H%M%S")
+    elif type=='camera':
+        # the format is 1_YYYY-MM-DD_HH-MM-SS_XXXX, so we can convert it to seconds
+        start_time = datetime.datetime.strptime(start_time, "1_%Y-%m-%d_%H-%M-%S_%f-converted")
+        start_time = start_time - datetime.timedelta(hours=1)  # the file time is the end of the recording, so we need to subtract 1 hour
+    interval_secs = sample_pos / sr
+    res = start_time + datetime.timedelta(seconds=int(interval_secs))
+    return res
+
+
+def test_peaks(y, peak_pos, sr, window_duration=0.25,num_show=0):
+    '''Validate the detected amplitude peaks to see they are dog barks
+    we look at the main frequencies in the stft amplitude spectrum
+    
+    For our dog, the peaks are:
+
+    Parameters:
+    -----------
+    y: np.ndarray
+        The audio signal.
+    peak_pos: np.ndarray
+        The positions of the detected peaks in the audio signal.
+    sr: int
+        The sample rate of the audio signal.
+    window_duration: float
+        The duration of the window to analyze around each peak in seconds.
+    num_show: int
+        The number of peaks to show in the plot for debugging.
+
+    Returns:
+    --------
+    verified_peaks: list
+        A list of verified peaks that are likely to be dog barks.
+    not_barks: list
+        A list of peaks that are not likely to be dog barks.
+    '''
+    verified_peak_pos = []
+    verified_peaks = []
+    not_barks = []
+    logger.debug(f'validating {len(peak_pos)} peaks')
+    last_peak = 0
+    num_tested = 0
+    for cpeak in peak_pos:
+        if cpeak < last_peak + sr * window_duration:
+            continue
+        last_peak = cpeak
+        num_tested += 1
+        start_sample = np.max([0,int(cpeak-sr*window_duration)])
+        end_sample = np.min([len(y),int(cpeak+sr*window_duration)])
+        y_cut = y[start_sample:end_sample]
+        res = librosa.stft(y_cut)
+        res = np.abs(res)
+        # res = librosa.amplitude_to_db(np.abs(res))
+        res_mean = res.mean(axis=1)
+        # normalize the mean to sum area=1
+        res_mean /= np.sum(res_mean)
+        # compare the to the expected bark frequencies
+        # dist = np.sum(np.abs(res_mean-bark_profile))
+        # print(f'peak {cpeak} has distance {dist}')
+        int_freq = np.sum(res_mean[20:80])+np.sum(res_mean[95:125])
+        bark_amp =  int_freq / (np.sum(res_mean) - int_freq)
+        # plt.title(f'Peak at {cpeak}, distance {dist}')
+        # if num_tested < num_show:
+        #     plt.figure()
+        #     plt.imshow(res, aspect='auto', origin='lower')
+        #     plt.title(f'Peak at {cpeak}, bark_amp {bark_amp}')
+        if bark_amp > 0.5:
+            verified_peaks.append(y_cut)
+            verified_peak_pos.append(cpeak)
+        else:
+            not_barks.append(y_cut)
+    logger.debug('found %d verified peaks, %d not barks' % (len(verified_peaks), len(not_barks)))
+    return verified_peak_pos, verified_peaks, not_barks
+
+
+def calculate_barks(filename: str, bark_threshold: float = 0.3, bark_max_interval: float = 10, type='camera'):
+    # get all the files in the base_dir that match the date
+    barks = pd.DataFrame(columns=['start_samples', 'end_samples', 'start_time', 'end_time', 'duration', 'num_barks'])
+
+    for file in [filename]:
+        logger.info('processing file %s' % file)
+        y, sr = librosa.load(file)
+        start_time = get_sample_time(file, 0, sr=sr, type=type)
+        logger.info('start time: %s' % start_time)
+        # identify bark events
+        peak_pos = np.where(y > bark_threshold)[0]
+        # peak_pos = validate_peaks(y, peak_pos, sr)
+        peak_pos, ok_barks, not_barks = test_peaks(y, peak_pos, sr)
+        if len(peak_pos) == 0:
+            logger.info("No barks detected.")
+            continue
+        peak_index = 0
+        done = False
+        while not done:
+            # logger.info('current peak: %d (position %f)'% ( peak_index, peak_pos[peak_index]))
+            next_peak_index = peak_index + 1
+            while next_peak_index < len(peak_pos) and peak_pos[next_peak_index] - peak_pos[peak_index] < bark_max_interval * sr:
+                next_peak_index += 1
+            # logger.info(f'next peak index: {next_peak_index} (position {peak_pos[next_peak_index-1]})')
+            # we have a bark event from peak_index to next_peak_index
+            start_sample = peak_pos[peak_index]
+            end_sample = peak_pos[next_peak_index - 1] + bark_max_interval * sr
+            # start_time_event = datetime.timedelta(seconds=start_sample / sr) + start_time
+            # end_time_event = datetime.timedelta(seconds=end_sample / sr) + start_time
+            start_time_event = get_sample_time(file, sample_pos=start_sample, sr=sr, type=type)
+            end_time_event = get_sample_time(file, sample_pos=end_sample, sr=sr, type=type)
+            duration = (end_time_event - start_time_event)
+            num_barks = next_peak_index - peak_index
+            
+            # Create a new row as a DataFrame and concatenate it
+            new_row = pd.DataFrame({
+                'start_samples': [start_sample],
+                'end_samples': [end_sample],
+                'start_time': [start_time_event],
+                'end_time': [end_time_event],
+                'duration': [duration],
+                'num_barks': [num_barks]
+            })
+            barks = pd.concat([barks, new_row], ignore_index=True)
+            
+            peak_index = next_peak_index
+            if peak_index >= len(peak_pos):
+                done = True
+    return barks
 
 
 def mkv_to_mp3(mkv_path, stream_index=0, out_path=None, vbr_quality=2):
@@ -142,6 +278,10 @@ def pipeline(dir='/Users/amnon/Downloads/'):
             logger.info(f"Extracted audio to {mp3_file}")
         else:
             logger.warning(f"Failed to extract audio from {f}")
+            continue
+        # identify barks
+        barks = calculate_barks(mp3_file, bark_threshold=0.3, bark_max_interval=10, type='camera')
+        logger.info(f"Identified {len(barks)} bark events in {mp3_file}, total barks duration {barks['duration'].sum()}")
 
     if mail_lines:
         send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
