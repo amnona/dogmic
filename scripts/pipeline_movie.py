@@ -19,7 +19,8 @@ secrets = dotenv_values(".env")
 
 def get_sample_time(filename, sample_pos, sr=16000, type='dogmic') -> datetime.time:
     # start_time = os.path.basename(filename)
-    start_time = '.'.join(filename.split('/')[-1].split('.')[:-1])
+    start_time = os.path.basename(filename)
+    start_time = '.'.join(start_time.split('.')[:-1])
     if type=='dogmic':
         # the format is YYYYMMDDHHMMSS, so we can convert it to seconds
         start_time = datetime.datetime.strptime(start_time, "%Y%m%d%H%M%S")
@@ -155,7 +156,7 @@ def mkv_to_mp3(mkv_path, stream_index=0, out_path=None, vbr_quality=2):
         out_path = mkv_path.with_suffix(".mp3")
     cmd = f'ffmpeg -y -i "{mkv_path}" -vn -map 0:a:{stream_index} -c:a libmp3lame -q:a {vbr_quality} "{out_path}"'
     subprocess.run(shlex.split(cmd), check=True)
-    return out_path
+    return str(out_path)
 
 
 def send_email(recipient, subject, body, user='irrigation.computer.amnon@gmail.com', pwd=None, smtp_server='smtp-relay.sendinblue.com', smtp_port=587, smtp_user='sugaroops@yahoo.com'):
