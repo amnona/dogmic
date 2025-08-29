@@ -17,7 +17,7 @@ logger = loguru.logger
 secrets = dotenv_values(".env")
 
 
-def get_sample_time(filename, sample_pos, sr=16000, type='dogmic') -> datetime.time:
+def get_sample_time(filename, sample_pos, sr=16000, type='dogmic') -> datetime.datetime:
     # start_time = os.path.basename(filename)
     start_time = os.path.basename(filename)
     start_time = '.'.join(start_time.split('.')[:-1])
@@ -100,7 +100,7 @@ def test_peaks(y, peak_pos, sr, window_duration=0.25,num_show=0):
 
 def calculate_barks(filename: str, bark_threshold: float = 0.3, bark_max_interval: float = 10, type='camera'):
     # get all the files in the base_dir that match the date
-    barks = pd.DataFrame(columns=['start_samples', 'end_samples', 'start_time', 'end_time', 'duration', 'num_barks'])
+    barks = pd.DataFrame(columns=['start_samples', 'end_samples', 'start_time', 'end_time', 'duration', 'num_barks', 'date'])
 
     for file in [filename]:
         logger.info('processing file %s' % file)
@@ -139,7 +139,8 @@ def calculate_barks(filename: str, bark_threshold: float = 0.3, bark_max_interva
                 'start_time': [start_time_event],
                 'end_time': [end_time_event],
                 'duration': [duration],
-                'num_barks': [num_barks]
+                'num_barks': [num_barks],
+                'date': [start_time_event.date()]
             })
             barks = pd.concat([barks, new_row], ignore_index=True)
             
@@ -154,7 +155,7 @@ def mkv_to_mp3(mkv_path, stream_index=0, out_path=None, vbr_quality=2):
     mkv_path = pathlib.Path(mkv_path)
     if out_path is None:
         out_path = mkv_path.with_suffix(".mp3")
-    cmd = f'ffmpeg -y -i "{mkv_path}" -vn -map 0:a:{stream_index} -c:a libmp3lame -q:a {vbr_quality} "{out_path}"'
+    cmd = f'ffmpeg -hide_banner -y -i "{mkv_path}" -vn -map 0:a:{stream_index} -c:a libmp3lame -q:a {vbr_quality} "{out_path}"'
     subprocess.run(shlex.split(cmd), check=True)
     return str(out_path)
 
@@ -194,7 +195,7 @@ def send_email(recipient, subject, body, user='irrigation.computer.amnon@gmail.c
         server.login(smtp_user, pwd)
         server.sendmail(FROM, TO, message)
         server.close()
-        logger.debug('sent email: subject %s to %s' % (SUBJECT, TO))
+        logger.info('sent email: subject %s to %s' % (SUBJECT, TO))
         return True
     except Exception as err:
         logger.warning('failed to send email: subject %s to %s. error %s' % (SUBJECT, TO, err))
@@ -264,6 +265,7 @@ def pipeline(dir='/Users/amnon/Downloads/'):
     mail_lines = []
     if len(new_files) == 0:
         return
+
     for f in new_files:
         logger.info(f"Processing file: {f}")
         # calculate md5 and save to X.md5
@@ -283,9 +285,13 @@ def pipeline(dir='/Users/amnon/Downloads/'):
         # identify barks
         barks = calculate_barks(mp3_file, bark_threshold=0.3, bark_max_interval=10, type='camera')
         logger.info(f"Identified {len(barks)} bark events in {mp3_file}, total barks duration {barks['duration'].sum()}")
+        with open('barks_log.tsv', 'a') as bark_log:
+            if barks is not None and len(barks) > 0:
+                bark_log.write(barks.to_csv(sep='\t', index=False, header=not os.path.exists('barks_log.tsv')))
 
     if mail_lines:
         send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
+
     # Done processing all files
     logger.info("Pipeline processing complete.")
 
