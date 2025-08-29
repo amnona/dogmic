@@ -26,7 +26,7 @@ def get_sample_time(filename, sample_pos, sr=16000, type='dogmic') -> datetime.t
         start_time = datetime.datetime.strptime(start_time, "%Y%m%d%H%M%S")
     elif type=='camera':
         # the format is 1_YYYY-MM-DD_HH-MM-SS_XXXX, so we can convert it to seconds
-        start_time = datetime.datetime.strptime(start_time, "1_%Y-%m-%d_%H-%M-%S_%f-converted")
+        start_time = datetime.datetime.strptime(start_time, "1_%Y-%m-%d_%H-%M-%S_%f")
         start_time = start_time - datetime.timedelta(hours=1)  # the file time is the end of the recording, so we need to subtract 1 hour
     interval_secs = sample_pos / sr
     res = start_time + datetime.timedelta(seconds=int(interval_secs))
