@@ -8,6 +8,8 @@ import subprocess, shlex, pathlib
 import datetime
 import numpy as np
 import librosa
+from email.message import EmailMessage
+import shutil
 
 import pandas as pd
 from dotenv import dotenv_values
@@ -188,15 +190,22 @@ def send_email(recipient, subject, body, user='irrigation.computer.amnon@gmail.c
     TEXT = body
 
     # Prepare actual message
-    message = """From: %s\nTo: %s\nSubject: %s\n\n%s""" % (FROM, ", ".join(TO), SUBJECT, TEXT)
+    message = EmailMessage()
+    message.set_content(TEXT)
+    message['Subject'] = SUBJECT
+    message['From'] = FROM
+    message['To'] = ", ".join(TO)
+    
+    # message = """From: %s\nTo: %s\nSubject: %s\n\n%s""" % (FROM, ", ".join(TO), SUBJECT, TEXT)
     try:
         logger.debug('connecting to email server %s on port %d' % (smtp_server, smtp_port))
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.ehlo()
-        server.starttls()
-        server.login(smtp_user, pwd)
-        server.sendmail(FROM, TO, message)
-        server.close()
+        # context = ssl.create_default_context()
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(smtp_user, pwd)
+            server.send_message(message)
         logger.info('sent email: subject %s to %s' % (SUBJECT, TO))
         return True
     except Exception as err:
@@ -226,7 +235,7 @@ def calculate_md5(file):
     return hash
 
 
-def find_new_files(dir='/Users/amnon/Downloads/', type='mkv'):
+def find_new_files(dir='/Users/amnon/Downloads/', type='mkv',max_process=None):
     '''Get list of new video file that still don't have .md5 file (and are not empty)
     
     Parameters
@@ -235,7 +244,9 @@ def find_new_files(dir='/Users/amnon/Downloads/', type='mkv'):
         The directory to search for new video files.
     type : str
         The file extension of the video files to search for.
-    
+    max_process: int or None
+        if not None, return at most max_process new files
+        
     Returns
     -------
     list
@@ -246,6 +257,10 @@ def find_new_files(dir='/Users/amnon/Downloads/', type='mkv'):
     for f in files:
         if not os.path.exists(f + '.md5') and os.path.getsize(f) > 0:
             new_files.append(f)
+            if max_process is not None:
+                if len(new_files) >= max_process:
+                    logger.info("reached max_process new files limit %d" % max_process)
+                    break
     if new_files:
         logger.info(f"Found {len(new_files)} files")
     else:
@@ -253,7 +268,7 @@ def find_new_files(dir='/Users/amnon/Downloads/', type='mkv'):
     return new_files
 
 
-def pipeline(dir='/Users/amnon/Downloads/'):
+def pipeline(dir='/Users/amnon/Downloads/', max_process=None):
     '''Perform the main pipeline processing:
     1. identify new video files (without .md5)
     2. calculate md5 checksums
@@ -263,12 +278,14 @@ def pipeline(dir='/Users/amnon/Downloads/'):
     6. identify barks
     7. save bark to log file
     '''
-    new_files = find_new_files(dir)
+    logger.info('pipeline started on dir %s' % dir)
+    new_files = find_new_files(dir, max_process=max_process)
     mail_lines = []
+    total_bark_time = 0
+    total_bark_num = 0
     if len(new_files) == 0:
         return
 
-    create_barks_header = True
     for f in new_files:
         logger.info(f"Processing file: {f}")
         # calculate md5 and save to X.md5
@@ -288,6 +305,14 @@ def pipeline(dir='/Users/amnon/Downloads/'):
         # identify barks
         barks = calculate_barks(mp3_file, bark_threshold=0.3, bark_max_interval=10, type='camera')
         logger.info(f"Identified {len(barks)} bark events in {mp3_file}, total barks duration {barks['duration'].sum()}")
+        if len(barks) > 0:
+            total_bark_time += barks['duration'].sum().total_seconds()
+            total_bark_num += len(barks)
+        barks_file_path = 'barks_log.tsv'
+        if not os.path.exists(barks_file_path):
+            create_barks_header = True
+        else:
+            create_barks_header = False
         with open('barks_log.tsv', 'a') as bark_log:
             if barks is not None and len(barks) > 0:
                 bark_log.write(barks.to_csv(sep='\t', index=False, header=create_barks_header))
@@ -295,8 +320,24 @@ def pipeline(dir='/Users/amnon/Downloads/'):
         # delete the mp3 file
         os.remove(mp3_file)
 
+        # move the processed files to the "/processed/" dir
+        dest_dir = "NOT SET"
+        try:
+            proc_dir = os.path.join(dir,'processed')
+            os.makedirs(proc_dir, exist_ok=True)
+            file_time = get_sample_time(f, 0, type='camera')
+            file_month = '%s-%s' % (file_time.year, file_time.month)
+            dest_dir = os.path.join(proc_dir, file_month)
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.move(f, dest_dir)
+            shutil.move(f+'.md5', dest_dir)
+            logger.info('moved file %s to %s' % (f, dest_dir))
+        except Exception as err:
+            logger.warning("failed to move files to %s. Error: %s" % (dest_dir, err))
+    
+    # send md5 summary email
     if mail_lines:
-        send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines))
+        send_email(secrets.get('TARGET_EMAIL'), "MD5 Checksums", "\n".join(mail_lines) + '\nbark estimation: %d barks, total duration %f' % (total_bark_num, total_bark_time))
 
     # Done processing all files
     logger.info("Pipeline processing complete.")
@@ -304,9 +345,15 @@ def pipeline(dir='/Users/amnon/Downloads/'):
 
 def main():
     parser = argparse.ArgumentParser(description="Process video files for calculating md5 hash, extracting audio and identifying barks")
-    parser.add_argument("--dir", type=str, default="/Users/amnon/Downloads/", help="Directory to scan for video files")
+    parser.add_argument("--dir", type=str, default=r"F:\dogcam\video\dogcam1c", help="Directory to scan for video files")
+    parser.add_argument('--max-process', type=int, default=None, help='maximal number of new files to process')
+    parser.add_argument('--log-file', default=r"F:\dogcam\video\dogcam1\script_log.txt", help='name of the script log file to create')
+    parser.add_argument('--log-level',default='INFO', help='log file message level (e.g. "DEBUG"/"INFO"/"WARN"/"ERROR")')
     args = parser.parse_args()
-    pipeline(dir=args.dir)
+ 
+    logger.add(args.log_file, level=args.log_level, rotation="10 MB")
+    logger.info('pipeline_movie started')
+    pipeline(dir=args.dir, max_process=args.max_process)
 
 
 if __name__ == "__main__":
