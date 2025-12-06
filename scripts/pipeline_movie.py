@@ -313,10 +313,15 @@ def pipeline(dir='/Users/amnon/Downloads/', max_process=None):
             create_barks_header = True
         else:
             create_barks_header = False
-        with open('barks_log.tsv', 'a') as bark_log:
-            if barks is not None and len(barks) > 0:
-                bark_log.write(barks.to_csv(sep='\t', index=False, header=create_barks_header))
-                create_barks_header = False
+
+        if barks is not None and len(barks) > 0:
+            barks.to_csv('barks_log.tsv', sep='\t', index=False, header=create_barks_header, mode='a')
+            create_barks_header = False
+
+        # with open('barks_log.tsv', 'a') as bark_log:
+        #     if barks is not None and len(barks) > 0:
+        #         bark_log.write(barks.to_csv(sep='\t', index=False, header=create_barks_header))
+        #         create_barks_header = False
         # delete the mp3 file
         os.remove(mp3_file)
 
